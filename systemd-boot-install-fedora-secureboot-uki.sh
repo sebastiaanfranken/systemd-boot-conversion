@@ -19,10 +19,15 @@ function log {
 
 log "Before running this script make sure your system is fully up to date!"
 
+# Make sure both git-core and tar are installed before going further, since the script needs 'm both
+# and I assumed this was run on a Fedora Workstation install, which has them by default, but that is
+# not always the case.
+sudo dnf install git-core tar $DNFOPTIONS
+
 # Before doing anything else install the components that sbctl (https://github.com/Foxboron/sbctl)
 # requires to install, since it's not (yet?) in the Fedora repos.
 log "Installing components that sbctl requires."
-sudo dnf install asciidoc golang git-core tar --setopt=install_weak_deps=False $DNFOPTIONS
+sudo dnf install asciidoc golang --setopt=install_weak_deps=False $DNFOPTIONS
 
 # Getting the source for sbctl. The VERSION variable should be updated if a new release of it is
 # pushed to GitHub.

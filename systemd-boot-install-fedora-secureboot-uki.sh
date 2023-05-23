@@ -28,7 +28,7 @@ sudo dnf install asciidoc golang --setopt=install_weak_deps=False $DNFOPTIONS
 # pushed to GitHub.
 VERSION=0.11
 cd /tmp
-curl -L https://github.com/Foxboron/sbctl/releases/download/$VERSION/sbctl-$VERSION.tar.gz | tar -zxvf -
+curl -L https://github.com/Foxboron/sbctl/releases/download/$VERSION/sbctl-$VERSION.tar.gz | tar -zxvf-
 cd sbctl-$VERSION
 make
 sudo make install

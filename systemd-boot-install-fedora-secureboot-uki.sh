@@ -22,7 +22,7 @@ log "Before running this script make sure your system is fully up to date!"
 # Before doing anything else install the components that sbctl (https://github.com/Foxboron/sbctl)
 # requires to install, since it's not (yet?) in the Fedora repos.
 log "Installing components that sbctl requires."
-sudo dnf install asciidoc golang --setopt=install_weak_deps=False $DNFOPTIONS
+sudo dnf install asciidoc golang git-core tar --setopt=install_weak_deps=False $DNFOPTIONS
 
 # Getting the source for sbctl. The VERSION variable should be updated if a new release of it is
 # pushed to GitHub.

@@ -8,7 +8,7 @@ IDENTIFIER=bootctl-conversion
 
 # These options get passed to DNF. You can add things like "-y" here for example. See `man dnf`
 # for available options.
-DNFOPTIONS=""
+DNFOPTIONS="-y"
 
 # This function handles logging to the journal and the screen. See the stuff about $IDENTIFIER
 # further up to see/understand how you can get the output later on.
@@ -28,7 +28,7 @@ sudo dnf install asciidoc golang --setopt=install_weak_deps=False $DNFOPTIONS
 # pushed to GitHub.
 VERSION=0.11
 cd /tmp
-curl -L https://github.com/Foxboron/sbctl/releases/download/sbctl-$VERSION.tar.gz | tar -zxvf -
+curl -L https://github.com/Foxboron/sbctl/releases/download/$VERSION/sbctl-$VERSION.tar.gz | tar -zxvf -
 cd sbctl-$VERSION
 make
 sudo make install

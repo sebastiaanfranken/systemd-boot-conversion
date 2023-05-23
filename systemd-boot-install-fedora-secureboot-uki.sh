@@ -35,8 +35,16 @@ sudo make install
 
 # After that's built and installed create and enroll (new) secure boot keys.
 log "Creating and enrolling (new) secure boot keys."
-sudo sbctl create-keys
-sudo sbctl enroll-keys
+systemd-cat -t $IDENTIFIER sudo sbctl create-keys
+systemd-cat -t $IDENTIFIER sudo sbctl enroll-keys
+
+# If the creating and/or enrolling keys fails this need to be seen by the user before the script
+# continues and fails later on. `sbctl` does a good job of telling what went wrong and where.
+if [[ $? -gt 0 ]]; then
+	log "Creating or enrolling the keys failed. Scroll back to see what happened."
+	log "After that, run this script again."
+	exit 1
+fi
 
 # Should the enroll-keys step fail you can manually export the newly created keys
 # and import them into your UEFI by hand with this:

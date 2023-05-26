@@ -11,9 +11,11 @@ IDENTIFIER=bootctl-conversion
 # Option(s) passed to the various calls to dnf.
 DNFOPTIONS="-y"
 
+# This checks where the ESP is mounted to
+ESP=$(bootctl status -p)
+
 # This is a wrapper around systemd-cat combined with echo for logging purposes.
-function log
-{
+function log {
 	systemd-cat -t $IDENTIFIER echo "$1"
 	echo "$1"
 }
@@ -38,7 +40,8 @@ systemd-cat -t $IDENTIFIER sudo bootctl install
 
 if [[ $? -gt 0 ]]; then
 	log "Something went wrong with the installation of systemd-boot-unsigned."
-	log "Run 'journalctl -t $IDENTIFIER' to see what."
+	log "See the full log with 'journalctl -t $IDENTIFIER'."
+	log "Exiting now."
 	exit 1
 fi
 
@@ -61,9 +64,10 @@ sudo ln -s /dev/null /etc/kernel/install.d/51-dracut-rescue.install
 
 # This does the heavy lifting of sorts, this configures dracut to generate unified kernel
 # images.
-log "Configuring to generate unified kernel images."
-sudo touch /etc/kernel/install.d/90-loaderentry.install
-sudo cat <<"EOF" > /etc/kernel/install.d/90-loaderentry.install
+log "Configuring dracut to generate unified kernel images."
+
+LOADERENTRY_FILE=/etc/kernel/install.d/90-loaderentry.install
+sudo tee $LOADERENTRY_FILE <<"EOT"
 #!/usr/bin/bash
 
 COMMAND="$1"
@@ -79,12 +83,14 @@ ENTRY_DIR=${ENTRY_DIR_ABS#$BOOT_MNT}
 if [[ $COMMAND == remove ]]; then
 	if [[ -f /etc/kernel/tries ]]; then
 		rm -f "$BOOT_ROOT/loader/entries/$MACHINE_ID-$KEREL_VERSION+"*".conf"
-		rm -f "$BOOT_ROOT/EFI/Linux/$KERNEL_VERSION-$MACHINE_ID+"*".conf"
+		rm -f "$BOOT_ROOT/EFI/Linux/$KERNEL_VERSION-$MACHINE_ID+"*".efi"
 	else
 		rm -f "$BOOT_ROOT/loader/entries/$MACHINE_ID-$KERNEL_VERSION.conf"
-		rm -f "$BOOT_ROOT/EFI/Linux/$KERNEL_VERSION-$MACHINE_ID+"*".conf"
+		rm -f "$BOOT_ROOT/EFI/Linux/$KERNEL_VERSION-$MACHINE_ID+"*".efi"
 	fi
 	
+	rpm -e --noscripts kernel-core-$KERNEL_VERSION
+
 	exit 0
 fi
 
@@ -138,7 +144,6 @@ mkdir -p "${LOADER_ENTRY%/*}" || {
 	exit 1
 }
 
-[ "$KERNEL_INSTALL_VERBOSE" -gt 0 ] && echo "Creating $LOADER_ENTRY"
 {
 	unset noimageifnotneeded
 	
@@ -149,12 +154,12 @@ mkdir -p "${LOADER_ENTRY%/*}" || {
 		fi
 	done
 	
-	systemd-cat -t uki dracut --kernel-cmdline "${BOOT_OPTIONS[*]}" -f ${noimageifnotneeded:+--noimageifnotneeded} --uefi "$LOADER_ENTRY" "$KERNEL_VERSION"
+	dracut --kernel-cmdline "${BOOT_OPTIONS[*]}" -f ${noimageifnotneeded:+--noimageifnotneeded} --uefi "$LOADER_ENTRY" "$KERNEL_VERSION"
 }
 exit 0
-EOF
+EOT
 
-sudo chmod +x /etc/kernel/install.d/90-loaderentry.install
+sudo chmod +x $LOADERENTRY_FILE
 
 # The following configures dracut to not use the crashkernel stuff. If you want/need this
 # alter this or comment it.
@@ -163,12 +168,13 @@ sudo ln -s /dev/null /etc/kernel/install.d/92-crashkernel.install
 
 # Configure dracut to work with systemd-boot and let it's do it's UKI magic.
 log "Configuring dracut to work with systemd-boot-unsigned and work with unified kernel images."
-sudo touch /etc/dracut.conf.d/systemd-boot-unsigned-modifications.conf
-sudo cat <<EOF > /etc/dracut.conf.d/systemd-boot-unsigned-modifications.conf
+DRACUT_EXTRA_CONF_FILE=/etc/dracut.conf.d/systemd-boot-unsigned-modifications.conf
+sudo touch $DRACUT_EXTRA_CONF_FILE
+sudo tee $DRACUT_EXTRA_CONF_FILE <<EOT
 uefi="yes"
 hostonly="yes"
 dracut_rescue_image="no"
-EOF
+EOT
 
 if [[ $(dnf list installed binutils 2>/dev/null | wc -l) -eq 0 ]]; then
 	log "Installing binutils before regenerating kernel images, as dracut need that."
@@ -200,6 +206,8 @@ for kver in $(dnf list installed kernel | tail -n +2 | awk '{print $2".x86_64"}'
 done
 
 # Rescue kernel generation
+log "Creating a rescue kernel image"
+
 if [[ -f /etc/kernel/cmdline ]]; then
 	read -r -d '' -a BOOT_OPTIONS < /etc/kernel/cmdline
 elif [[ -f /usr/lib/kernel/cmdline ]]; then
@@ -214,9 +222,8 @@ else
 fi
 
 read -r MACHINE_ID < /etc/machine-id
-LOADER_ENTRY="/boot/efi/EFI/Linux/0-rescue-$MACHINE_ID.efi"
-
-systemd-cat -t uki dracut --kernel-cmdline "${BOOT_OPTIONS[*]}" -f --no-hostonly -a "rescue" --uefi "$LOADER_ENTRY" "$LASTKVER"
+LOADER_ENTRY="$ESP/EFI/Linux/0-rescue-$MACHINE_ID.efi"
+systemd-cat -t $IDENTIFIER dracut --kernel-cmdline "${BOOT_OPTIONS[*]}" -f --no-hostonly -a "rescue" --uefi "$LOADER_ENTRY" "$LASTKVER"
 
 # Time to clean up files and folders that are no longer required.
 log "Cleaning up files and folders that are no longer required."
@@ -226,6 +233,8 @@ sudo rm -rf /boot/initramfs*
 sudo rm -rf /boot/symvers*
 sudo rm -rf /boot/System.map*
 sudo rm -rf /boot/vmlinuz*
+
+echo -e "\n"
 
 # The end!
 log "systemd-boot-unsigned *should* have been fully installed and properly configured."

@@ -10,6 +10,9 @@ IDENTIFIER=bootctl-conversion
 # for available options.
 DNFOPTIONS="-y"
 
+# This checks where the ESP is mounted to
+ESP=$(bootctl status -p)
+
 # This function handles logging to the journal and the screen. See the stuff about $IDENTIFIER
 # further up to see/understand how you can get the output later on.
 function log {
@@ -46,8 +49,9 @@ systemd-cat -t $IDENTIFIER sudo sbctl enroll-keys
 # If the creating and/or enrolling keys fails this need to be seen by the user before the script
 # continues and fails later on. `sbctl` does a good job of telling what went wrong and where.
 if [[ $? -gt 0 ]]; then
-	log "Creating or enrolling the keys failed. Scroll back to see what happened."
-	log "After that, run this script again."
+	log "Something went wrong with creating or enrolling secure boot keys with sbctl."
+	log "See the full log with 'journalctl -t $IDENTIFIER'."
+	log "Exiting now."
 	exit 1
 fi
 
@@ -86,19 +90,17 @@ fi
 
 # Sign the systemd-boot EFI files with the secure boot key created above.
 log "Signing the systemd-boot EFI files."
-sudo sbctl sign /boot/efi/EFI/systemd/systemd-bootx86.efi
-sudo sbctl sign /boot/efi/EFI/BOOT/BOOTX64.EFI
+sudo sbctl sign $ESP/EFI/systemd/systemd-bootx64.efi
+sudo sbctl sign $ESP/EFI/BOOT/BOOTX64.EFI
 
 log "Configuring systemd-boot"
 sudo dnf install sbsigntools $DNFOPTIONS
 sudo mkdir -p /etc/systend/system/systemd-boot-update.service.d/
-sudo touch /etc/systemd/system/systemd-boot-update.service.d/override.conf
-
-sudo tee -a /etc/systemd/system/systemd-boot-update.service.d/override.conf <<EOT
+sudo tee /etc/systemd/system/systemd-boot-update.service.d/override.conf <<EOT
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c 'sbverify --cert /usr/share/secureboot/keys/db/db.pem /boot/efi/EFI/systemd/systemd-bootx64.efi || sbctl sign /boot/efi/EFI/systemd/systemd-bootx64.efi'
-ExecStart=/bin/sh -c 'sbverify --cert /usr/share/secureboot/keys/db/db.pem /boot/efi/EFI/BOOT/BOOTX64.EFI || sbctl sign /boot/efi/EFI/BOOT/BOOTX64.EFI'
+ExecStart=/bin/sh -c 'sbverify --cert /usr/share/secureboot/keys/db/db.pem $ESP/EFI/systemd/systemd-bootx64.efi || sbctl sign $ESP/EFI/systemd/systemd-bootx64.efi'
+ExecStart=/bin/sh -c 'sbverify --cert /usr/share/secureboot/keys/db/db.pem $ESP/EFI/BOOT/BOOTX64.EFI || sbctl sign $ESP/EFI/BOOT/BOOTX64.EFI'
 EOT
 
 sudo systemctl daemon-reload
@@ -106,11 +108,12 @@ sudo systemctl daemon-reload
 log "Configuring systemd-boot with sane defaults."
 cat /proc/cmdline | cut -d " " -f2- | sudo tee /etc/kernel/cmdline
 echo "layout=bls" | sudo tee /etc/kernel/install.conf
-sudo ln -sv /dev/null /etc/kernel/install.d/50-dracut.install
-sudo ln -sv /dev/null /etc/kernel/install.d/51-dracut-rescue.install
-sudo ln -sv /dev/null /etc/kernel/install.d/92-crashkernel.install
+sudo ln -s /dev/null /etc/kernel/install.d/50-dracut.install
+sudo ln -s /dev/null /etc/kernel/install.d/51-dracut-rescue.install
+sudo ln -s /dev/null /etc/kernel/install.d/92-crashkernel.install
 
-sudo tee -a /etc/kernel/install.d/90-loaderentry.install <<"EOT"
+LOADERENTRY_FILE=/etc/kernel/install.d/90-loaderentry.install
+sudo tee $LOADERENTRY_FILE <<"EOT"
 #!/usr/bin/bash
 
 COMMAND="$1"
@@ -131,6 +134,8 @@ if [[ $COMMAND == remove ]]; then
 		rm -f "$BOOT_ROOT/loader/entries/$MACHINE_ID-$KERNEL_VERSION.conf"
 		rm -f "$BOOT_ROOT/EFI/Linux/$KERNEL_VERSION-$MACHINE_ID.efi"
 	fi
+
+	rpm -e --noscripts kernel-core-$KERNEL_VERSION
 
 	exit 0
 fi
@@ -200,10 +205,9 @@ mkdir -p "${LOADER_ENTRY%/*}" || {
 exit 0
 EOT
 
-sudo chmod +x /etc/kernel/install.d/90-loaderentry.install
+sudo chmod +x $LOADERENTRY_FILE
 
 log "Configuring dracut"
-sudo touch /etc/dracut.conf.d/systemd-boot-modifications.conf
 sudo tee /etc/dracut.conf.d/systemd-boot-modifications.conf <<EOT
 uefi="yes"
 uefi_secureboot_cert="/usr/share/secureboot/keys/db/db.pem"
@@ -220,11 +224,14 @@ sudo rm /etc/dnf/protected.d/{grub*,shim}.conf
 # This call to DNF does *not* get the DNFOPTIONS passed since removing them without user confirmation
 # is a bad idea.
 sudo dnf remove grubby grub2* shim*
-echo "ignore=grubby grub2* shim*" | sudo tee -a /etc/dnf/dnf.conf
+
+if [[ $? -eq 0 ]]; then
+	echo "ignore=grubby grub2* shim*" | sudo tee -a /etc/dnf/dnf.conf
+	sudo rm -rf /boot/grub2/
+fi
 
 # Clean up stuff
 log "Cleaning up folders from /boot that are no longer required."
-sudo rm -rf /boot/grub2/
 sudo rm -rf /boot/config*
 sudo rm -rf /boot/initramfs*
 sudo rm -rf /boot/symvers*
@@ -233,9 +240,31 @@ sudo rm -rf /boot/vmlinuz*
 
 # Generate new (signed) kernel images
 log "(Re)generating new kernel images"
+LASTKVER=0
 for kver in $(dnf list installed kernel | tail -n +2 | awk '{print $2".x86_64"}'); do
 	sudo kernel-install -v add $kver /usr/lib/modules/$kver/vmlinuz
+	LASTKVER=$kver
 done
+
+# Generate a rescue image.
+if [[ -f /etc/kernel/cmdline ]]; then
+	read -r -d '' -a BOOT_OPTIONS < /etc/kernel/cmdline
+elif [[ -f /usr/lib/kernel/cmdline ]]; then
+	read -r -d '' -a BOOT_OPTIONS < /usr/lib/kernel/cmdline
+else
+	declare -a BOOT_OPTIONS
+	read -r -d '' -a line < /proc/cmdline
+	for i in "${line[@]}"; do
+		[[ "${i#initrd=*}" != "$i" ]] && continue
+		BOOT_OPTIONS+=("$i")
+	done
+fi
+
+read -r MACHINE_ID < /etc/machine-id
+LOADER_ENTRY="$ESP/EFI/Linux/0-rescue-$MACHINE_ID.efi"
+systemd-cat -t $IDENTIFIER dracut --kernel-cmdline "${BOOT_OPTIONS[*]}" -f --no-hostonly -a "rescue" --uefi "$LOADER_ENTRY" "$LASTKVER"
+
+echo -e "\n"
 
 # The end
 log "systemd-boot should have been installed and fully configured. Reboot your machine now and see if that's the case."

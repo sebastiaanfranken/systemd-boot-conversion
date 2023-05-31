@@ -20,6 +20,13 @@ function log {
 	echo "$1"
 }
 
+if [[ $(lsmod | grep nvidia -c) -gt 0 ]]; then
+	log "The nvidia driver is detected on this system. Aborting converting this system to"
+	log "a UKI powered one with secure boot, since the nvidia driver is known to cause"
+	log "breakages."
+	exit 0
+fi
+
 log "Before running this script make sure your system is fully up to date!"
 
 # Make sure both git-core and tar are installed before going further, since the script needs 'm both

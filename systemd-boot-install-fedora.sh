@@ -8,29 +8,32 @@ IDENTIFIER=bootctl-conversion
 
 # These options get passed to DNF. You can add things like
 # "-y" here for example. See `man dnf` for available options.
-DNFOPTIONS=""
+DNFOPTIONS="-y"
 
 # With this function the output passed gets written into the system journal and output to screen.
 function log {
-	systemd-cat -t ${IDENTIFIER} echo "$1"
+	systemd-cat -t $IDENTIFIER echo "$1"
 	echo "$1"
 }
 
-# Create the /tmp/${IDENTIFIER}/ folder first
-mkdir -p /tmp/${IDENTIFIER}/
+if [[ $(lsmod | grep nvidia -c) -gt 0 ]]; then
+	log "The nvidia driver is detected on this system. Aborting converting this system to"
+	log "use systemd-boot with secure boot, since the nvidia driver is known to cause breakages."
+	exit 0
+fi
 
 log "Before running this script make sure your system is fully up to date!"
 
 # Installation of components for sbctl
 log "Installing components that sbctl requires."
-sudo dnf install asciidoc golang --setopt=install_weak_deps=False ${DNFOPTIONS}
+sudo dnf install asciidoc golang --setopt=install_weak_deps=False $DNFOPTIONS
 
 # Getting the source. The VERSION variable should be updated if a new release
 # is pushed to Github
 VERSION=0.11
 cd /tmp
-curl -L https://github.com/Foxboron/sbctl/releases/download/${VERSION}/sbctl-${VERSION}.tar.gz | tar -zxvf -
-cd sbctl-${VERSION}
+curl -L https://github.com/Foxboron/sbctl/releases/download/$VERSION/sbctl-$VERSION.tar.gz | tar -zxvf -
+cd sbctl-$VERSION
 make
 sudo make install
 
@@ -55,14 +58,15 @@ log "Installing systemd-boot fully."
 
 if [[ $(dnf list installed systemd-boot 2>/dev/null | wc -l) -eq 0 ]]; then
 	log "Installing systemd-boot package first."
-	sudo dnf install systemd-boot ${DNFOPTIONS}
+	sudo dnf install systemd-boot $DNFOPTIONS
 fi
 
-sudo bootctl install 1>/tmp/${IDENTIFIER}/systemd-boot-install.log 2>&1
+systemd-cat -t $IDENTIFIER sudo bootctl install
 
-if [[ ${?} -gt 0 ]]; then
+if [[ $? -gt 0 ]]; then
 	log "Something went wrong with the installation of systemd-boot."
-	log "See the full log at /tmp/${IDENTIFIER}/systemd-boot-install.log."
+	log "See the full log with 'journalctl -t $IDENTIFIER'."
+	log "Exiting now."
 	exit 1
 fi
 
@@ -71,25 +75,25 @@ sudo sbctl sign /boot/efi/EFI/systemd/systemd-bootx64.efi
 sudo sbctl sign /boot/efi/EFI/BOOT/BOOTX64.EFI
 
 log "Configuring systemd-boot"
-sudo dnf install sbsigntools ${DNFOPTIONS}
+sudo dnf install sbsigntools $DNFOPTIONS
 sudo mkdir -p /etc/systemd/system/systemd-boot-update.service.d/
 
-echo <<"EOF" > /etc/systemd/system/systemd-boot-update.service.d/override.conf
+sudo tee /etc/systemd/system/systemd-boot-update.service.d <<EOT
 [Service]
 Type=oneshot
 ExecStart=/bin/sh -c 'sbverify --cert /usr/share/secureboot/keys/db/db.pem /boot/efi/EFI/systemd/systemd-bootx64.efi || sbctl sign /boot/efi/EFI/systemd/systemd-bootx64.efi'
 ExecStart=/bin/sh -c 'sbverify --cert /usr/share/secureboot/keys/db/db.pem /boot/efi/EFI/BOOT/BOOTX64.EFI || sbctl sign /boot/efi/EFI/BOOT/BOOTX64.efi'
-EOF
+EOT
 
 sudo systemctl daemon-reload
+
 log "Configuring systemd-boot with sane defaults."
 cat /proc/cmdline | cut -d " " -f2- | sudo tee /etc/kernel/cmdline
 echo "layout=bls" | sudo tee /etc/kernel/install.conf
-sudo ln -sv /dev/null /etc/kernel/install.d/51-dracut-rescue.install
-sudo ln -sv /dev/null /etc/kernel/install.d/92-crashkernel.install
-sudo touch /etc/kernel/install.d/95-use-signed-images.install
+sudo ln -s /dev/null /etc/kernel/install.d/51-dracut-rescue.install
+sudo ln -s /dev/null /etc/kernel/install.d/92-crashkernel.install
 
-cat <<"EOF" > /etc/kernel/install.d/95-use-signed-images.install
+sudo tee /etc/kernel/install.d/95-use-signed-images.install <<"EOT"
 #!/bin/bash
 
 COMMAND="$1"
@@ -121,26 +125,19 @@ sed -i "^/linux/s/linux$/initrd/" "${LOADER_ENTRY}"
 if [[ -f "${BOOT_ROOT}/${MACHINE_ID}/${KERNEL_VERSION}/linux" ]]; then
 	rm "${BOOT_ROOT}/${MACHINE_ID}/${KERNEL_VERSION}/linux"
 fi
-EOF
+EOT
 
 sudo chmod +x /etc/kernel/install.d/95-use-signed-images.install
 
 # Configure dracut
 log "Configuring dracut."
-sudo touch /etc/dracut.conf.d/local-modifications.conf
-echo <<"EOF" > /etc/dracut.conf.d/local-modifications.conf
+sudo tee /etc/dracut.conf.d/local-modificatiions.conf <<EOT
 uefi="yes"
 uefi_secureboot_cert="/usr/share/secureboot/keys/db/db.pem"
 uefi_secureboot_key="/usr/share/secureboot/keys/db/db.key"
 dracut_rescue_image="no"
 hostonly="yes"
-EOF
-
-# Generate new (signed) kernel images
-log "Generating new unified kernel images"
-for kver in $(dnf list installed kernel | tail -n +2 | awk '{print $2".x86_64"}'); do
-	sudo kernel-install -v add ${kver} /lib/modules/${kver}/vmlinuz
-done
+EOT
 
 # Removal of grubby, grub2* and shim*
 log "Removing grubby, grub2* and shim*"
@@ -151,7 +148,13 @@ sudo rm /etc/dnf/protected.d/{grub*,shim}.conf
 sudo dnf remove grubby grub2* shim*
 echo "ignore=grubby grub2* shim*" | sudo tee -a /etc/dnf/dnf.conf
 
-# Cleanup of stuff 
+# Generate new (signed) kernel images
+log "Generating new unified kernel images"
+for kver in $(dnf list installed kernel | tail -n +2 | awk '{print $2".x86_64"}'); do
+	systemd-cat -t $IDENTIFIER sudo kernel-install -v add $kver /usr/lib/modules/$kver/vmlinuz
+done
+
+# Cleanup of stuff
 log "Cleaning up stuff"
 sudo rm -rf /boot/grub2/
 sudo rm -rf /boot/config*

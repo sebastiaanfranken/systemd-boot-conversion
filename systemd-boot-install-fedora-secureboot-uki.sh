@@ -20,6 +20,22 @@ function log {
 	echo "$1"
 }
 
+# If the nvidia driver (from RPMFusion / nvidia themselves) is detected/in use on this system stop
+# execution of the script here since that is *known* to not work.
+#
+# A possible "fix" would be to include the nvidia kernel module(s) into the UKI image so it gets signed
+# as a whole. That could be done with something like this:
+#
+# if [[ $(lsmod | grep -c nvidia) -gt 0 ]]; then
+# 	 log "The nvidia driver is detected on this system. Attempting to include it in the UKI"
+# 	 log "image so it gets signed with the rest of the kernel."
+#	 log "This is not tested, so tread carefully."
+#	 MODS="$(lsmod | awk '{print $1}' | grep nvidia | tr '\n' ' ')"
+#	 sudo tee /etc/dracut.conf.d/nvidia-signed-modules.conf <<"EOT"
+#	 add_drivers+=" $MODS "
+# 	 EOT
+# fi
+
 if [[ $(lsmod | grep nvidia -c) -gt 0 ]]; then
 	log "The nvidia driver is detected on this system. Aborting converting this system to"
 	log "a UKI powered one with secure boot, since the nvidia driver is known to cause"

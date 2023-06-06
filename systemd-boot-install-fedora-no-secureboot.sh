@@ -95,8 +95,8 @@ else
 	LOADER_ENTRY="${BOOT_ROOT}/loader/entries/${MACHINE_ID}-${KERNEL_VERSION}.conf"
 fi
 
-sed -i "^/initrd/d" "${LOADER_ENTRY}"
-sed -i "^/linux/s/linux$/initrd/" "${LOADER_ENTRY}"
+sed -i "/^initrd/d" "${LOADER_ENTRY}"
+sed -i "/^linux/s/linux$/initrd/" "${LOADER_ENTRY}"
 
 if [[ -f "${BOOT_ROOT}/${MACHINE_ID}/${KERNEL_VERSION}/linux" ]]; then
 	rm "${BOOT_ROOT}/${MACHINE_ID}/${KERNEL_VERSION}/linux"

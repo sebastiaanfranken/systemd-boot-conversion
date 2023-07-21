@@ -21,10 +21,10 @@ function log {
 # Create the /tmp/${IDENTIFIER}/ folder
 mkdir -p /tmp/${IDENTIFIER}/
 
-if [[ ${?} -gt 0 ]];
+if [[ ${?} -gt 0 ]]; then
 	log "Creating the /tmp/${IDENTIFIER}/ folder failed with error code ${?}. Aborting."
 	exit 1
-then
+fi
 
 log "Before running this script make sure your system is fully up to date!"
 

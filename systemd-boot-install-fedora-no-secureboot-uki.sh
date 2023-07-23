@@ -36,18 +36,26 @@ if [[ $(dnf list installed systemd-boot-unsigned 2>/dev/null | wc -l) -eq 0 ]]; 
 	sudo dnf install systemd-boot-unsigned $DNFOPTIONS
 fi
 
-systemd-cat -t $IDENTIFIER sudo bootctl install
-
-if [[ $? -gt 0 ]]; then
+systemd-cat -t $IDENTIFIER sudo bootctl install || {
 	log "Something went wrong with the installation of systemd-boot-unsigned."
 	log "See the full log with 'journalctl -t $IDENTIFIER'."
 	log "Exiting now."
 	exit 1
-fi
+}
 
 # Configure systemd-boot-unsigned with sane defaults.
 log "Configuring systemd-boot-unsigned with sane defaults."
-cat /proc/cmdline | cut -d ' ' -f 2- | sudo tee /etc/kernel/cmdline
+
+if [[ -f /etc/kernel/cmdline ]]; then
+	sudo cp /etc/kernel/cmdline /etc/kernel/cmdline.original
+fi
+
+cut -d ' ' -f2- /proc/cmdline | sudo tee /etc/kernel/cmdline
+
+if [[ -f /etc/kernel/install.conf ]]; then
+	sudo cp /etc/kernel/install.conf /etc/kernel/install.conf.original
+fi
+
 echo 'layout=bls' | sudo tee /etc/kernel/install.conf
 
 # The following disables the classic genration of initramfs's when needed. This is done later
@@ -66,7 +74,7 @@ sudo ln -s /dev/null /etc/kernel/install.d/51-dracut-rescue.install
 # images.
 log "Configuring dracut to generate unified kernel images."
 
-LOADERENTRY_FILE=/etc/kernel/install.d/90-loaderentry.install
+LOADERENTRY_FILE="/etc/kernel/install.d/90-loaderentry.install"
 sudo tee $LOADERENTRY_FILE <<"EOT"
 #!/usr/bin/bash
 
@@ -168,13 +176,13 @@ sudo ln -s /dev/null /etc/kernel/install.d/92-crashkernel.install
 
 # Configure dracut to work with systemd-boot and let it's do it's UKI magic.
 log "Configuring dracut to work with systemd-boot-unsigned and work with unified kernel images."
-DRACUT_EXTRA_CONF_FILE=/etc/dracut.conf.d/systemd-boot-unsigned-modifications.conf
+DRACUT_EXTRA_CONF_FILE="/etc/dracut.conf.d/systemd-boot-unsigned-modifications.conf"
 sudo touch $DRACUT_EXTRA_CONF_FILE
-sudo tee $DRACUT_EXTRA_CONF_FILE <<EOT
+sudo tee $DRACUT_EXTRA_CONF_FILE << EOF
 uefi="yes"
 hostonly="yes"
 dracut_rescue_image="no"
-EOT
+EOF
 
 if [[ $(dnf list installed binutils 2>/dev/null | wc -l) -eq 0 ]]; then
 	log "Installing binutils before regenerating kernel images, as dracut need that."
@@ -201,7 +209,7 @@ echo "ignore=grubby grub2* shim" | sudo tee -a /etc/dnf/dnf.conf
 # Regenerate kernel images
 LASTKVER=0
 for kver in $(dnf list installed kernel | tail -n +2 | awk '{print $2".x86_64"}'); do
-	sudo kernel-install add $kver /usr/lib/modules/$kver/vmlinuz
+	sudo kernel-install -v add "$kver" "/usr/lib/modules/$kver/vmlinuz"
 	LASTKVER=$kver
 done
 

@@ -18,14 +18,6 @@ function log {
 	echo "$1"
 }
 
-# Create the /tmp/${IDENTIFIER}/ folder
-mkdir -p /tmp/${IDENTIFIER}/
-
-if [[ ${?} -gt 0 ]];
-	log "Creating the /tmp/${IDENTIFIER}/ folder failed with error code ${?}. Aborting."
-	exit 1
-then
-
 log "Before running this script make sure your system is fully up to date!"
 
 # The current implementation of systemd-boot with grub on Fedora creates and uses /boot/loader
@@ -39,22 +31,18 @@ log "Installing systemd-boot properly."
 
 if [[ $(dnf list installed systemd-boot-unsigned 2>/dev/null | wc -l) -eq 0 ]]; then
 	log "Installing systemd-boot-unsigned package first."
-	sudo dnf install systemd-boot-unsigned ${DNFOPTIONS}
+	sudo dnf install systemd-boot-unsigned "$DNFOPTIONS"
 fi
 
-sudo bootctl install 2>&1 1>/tmp/${IDENTIFIER}/systemd-boot-install.log
-# systemd-cat -t ${IDENTIFIER} sudo bootctl install
-
-if [[ ${?} -gt 0 ]]; then
+systemd-cat -t ${IDENTIFIER} sudo bootctl install || {
 	log "Something went wrong with the installation of systemd-boot."
-	log "Check the log at /tmp/${IDENTIFIER}/systemd-boot-install.log to see what."
-	
+	log "Check the log with journalctl to see what."
 	exit 1
-fi
+}
 
 # Configure systemd-boot with 'sane defaults'
 log "Configuring systemd-boot with sane default"
-cat /proc/cmdline | cut -d " " -f2- | sudo tee -a /etc/kernel/cmdline
+cut -d " " -f2- /proc/cmdline | sudo tee /etc/kernel/cmdline
 echo "layout=bls" | sudo tee /etc/kernel/install.conf
 
 # Overwrite configs in /usr/lib/kernel/install.d with version (symlinks to /dev/null)
@@ -108,16 +96,18 @@ sudo chmod +x /etc/kernel/install.d/95-use-unified-images.install
 # Configure dracut to work with systemd-boot and not rely on grub
 log "Configuring dracut to work with systemd-boot and not rely on grub."
 sudo touch /etc/dracut.conf.d/systemd-boot-modifications.conf
-echo <<"EOF" > /etc/dracut.conf.d/systemd-boot-modifications.conf
+
+(cat << EOF
 uefi="yes"
 dracut_rescue_image="no"
 hostonly="yes"
 EOF
+) | sudo tee -a /etc/dracut.conf.d/systemd-boot-modifications.conf
 
 # (re)generate kernel images so they get "unified"
 log"Generating new kernel images"
 for kver in $(dnf list installed kernel | tail -n +2 | awk '{print $2".x86_64"}'); do
-	kernel-install -v add ${kver} /lib/modules/${kver}/vmlinuz
+	kernel-install -v add "$kver" /lib/modules/"$kver"/vmlinuz
 done
 
 # Removal of GRUB2

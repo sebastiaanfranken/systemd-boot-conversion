@@ -34,7 +34,7 @@ sudo dnf remove grubby grub2* shim $DNFOPTIONS
 
 # Make sure objcopy is installed (provided by binutils), since that's needed for kernel generation
 # with dracut.
-dnf list installed binutils || {
+dnf list --installed binutils || {
 	sudo dnf install binutils $DNFOPTIONS
 }
 
@@ -53,7 +53,7 @@ log "Recreating the /boot/efi folder and mounting the ESP back to it."
 sudo mkdir -p /boot/efi && sudo mount "$ESPSOURCE" /boot/efi
 
 # Make sure systemd-boot-unsigned is installed. If it is, install the boot code.
-dnf list installed systemd-boot-unsigned || {
+dnf list --installed systemd-boot-unsigned || {
 	sudo dnf install systemd-boot-unsigned $DNFOPTIONS
 }
 

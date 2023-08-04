@@ -32,6 +32,12 @@ log "Removing grub2, grubby, and shim pacakges."
 sudo rm -f /etc/dnf/protected.d/{grub*,shim}.conf
 sudo dnf remove grubby grub2* shim $DNFOPTIONS
 
+# Make sure objcopy is installed (provided by binutils), since that's needed for kernel generation
+# with dracut.
+dnf list installed binutils || {
+	sudo dnf install binutils $DNFOPTIONS
+}
+
 # Unmount the ESP
 sudo umount "$ESP"
 

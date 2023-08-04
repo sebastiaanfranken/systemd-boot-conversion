@@ -91,3 +91,4 @@ log "systemd-boot should have been fully configured and installed."
 log "Reboot your system now and cross your fingers."
 
 exit 0
+

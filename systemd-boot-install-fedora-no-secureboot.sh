@@ -72,7 +72,7 @@ else
 	sudo cp /etc/kernel/install.conf /etc/kernel/install.conf.original
 fi
 
-echo "layout=bls" | sudo tee -a /etc/kernel/install.conf
+echo "layout=bls" | sudo tee /etc/kernel/install.conf
 
 # Time to regenerate the kernel image(s) so they get rebuilt and put into their right
 # location on the ESP. This used to be done with a call to kernel-install, but a simple
@@ -80,7 +80,7 @@ echo "layout=bls" | sudo tee -a /etc/kernel/install.conf
 # The only caveat here is that the system *has to be* fully updated, otherwise DNF5 will
 # throw a fit.
 log "Reinstalling / regenerating kernel images"
-sudo dnf reinstall kernel-core $DNFOPTIONS || {
+systemd-cat -t $IDENTIFIER sudo dnf reinstall kernel-core $DNFOPTIONS || {
 	log "Something went wrong during the reinstallation of the kernel-core package."
 	log "Check the DNF output for more info."
 	exit 1
